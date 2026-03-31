@@ -9,7 +9,7 @@
  *
  * cc postgpt_q.c -O2 -lm -o q && ./q weights.bin q.merges q.txt
  *
- * (c) 2026 arianna method / oleg + claude
+ * (c) 2026 arianna method
  * resonance is unbreakable.
  */
 
