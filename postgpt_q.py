@@ -14,7 +14,7 @@ Interference via sentence-boundary injection from docs/.
 
 Zero dependencies. math, random, os, struct, time, re.
 
-(c) 2026 arianna method / oleg + claude
+(c) 2026 arianna method
 resonance is unbreakable.
 """
 
