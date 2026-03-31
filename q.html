@@ -660,7 +660,13 @@ function coherenceScore(ids){
   let biSum=0;
   for(let i=0;i<ids.length-1;i++)biSum+=mw.queryBi(ids[i],ids[i+1]);
   const lenBonus=ids.length>15?1.5:ids.length>10?0.8:ids.length>6?0.2:-0.5;
-  return biSum/(ids.length-1)+lenBonus;
+  // Hebbian density component (matches C)
+  let hbSum=0;
+  for(let i=0;i<ids.length-1&&i<20;i++){
+    const a=Math.min(ids[i],ids[i+1]),b=Math.max(ids[i],ids[i+1]);
+    const v=mw.hebb.get(a*65536+b)||0;hbSum+=v;
+  }
+  return biSum/(ids.length-1)+0.3*hbSum/(ids.length-1)+lenBonus;
 }
 
 function genSentence(prompt,temp,gdest){
@@ -761,7 +767,18 @@ function genSentence(prompt,temp,gdest){
 
     prevChosen=ch;
     out.push(ch);ctx.push(ch);
-    mw.captureOnline(ctx[ctx.length-2],ch);
+    // word capture: bigram + Hebbian (matches C online capture)
+    if(ctx.length>=2){
+      mw.captureOnline(ctx[ctx.length-2],ch);
+      // Hebbian: co-occurrence with window=6
+      const hw=Math.max(0,ctx.length-6);
+      for(let ri=hw;ri<ctx.length-1;ri++){
+        const a=Math.min(ctx[ri],ch),b=Math.max(ctx[ri],ch);
+        const decay=1/(1+Math.abs((ctx.length-1)-ri));
+        const k=a*65536+b;
+        mw.hebb.set(k,(mw.hebb.get(k)||0)+decay*0.005);
+      }
+    }
     if(bpe.isBoundary(ch)&&step>8)break;
   }
   if(gdest)for(let d=0;d<D;d++)gdest[d]=0.7*gdest[d]+0.3*destiny[d];
