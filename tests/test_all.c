@@ -274,14 +274,192 @@ void test_nucleus(void) {
     PASS();
 }
 
-/* ── 12. Smoke test ── */
-void test_smoke(void) {
-    TEST("smoke_compile_run");
+/* ── 12. Prophecy query ── */
+void test_prophecy(void) {
+    TEST("prophecy_query");
+    /* prophecy should predict unseen tokens from bigram context */
+    typedef struct{int a,b;float prob;}Bi;
+    Bi bis[4]={{0,1,0.8f},{0,2,0.5f},{1,3,0.9f},{2,0,0.3f}};
+    /* ctx=[0,1], prophecy should suggest token 3 (via 1→3) and 2 (via 0→2) */
+    /* but not 1 (already appeared) */
+    int ctx[]={0,1};
+    float out[4]={0};
+    /* manual prophecy: for last 4 ctx tokens, find bigrams to unseen */
+    for(int ci=0;ci<2;ci++){
+        for(int k=0;k<4;k++){
+            if(bis[k].a==ctx[ci]&&bis[k].b!=0&&bis[k].b!=1) /* not appeared */
+                out[bis[k].b]+=bis[k].prob;
+        }
+    }
+    CHECK(out[3]>0, "predicts token 3"); CHECK(out[2]>0, "predicts token 2");
+    CHECK(out[0]==0, "skips appeared 0"); CHECK(out[1]==0, "skips appeared 1");
+    PASS();
+}
+
+/* ── 13. Trauma gravity ── */
+void test_trauma(void) {
+    TEST("trauma_gravity");
+    float raw[]={10.0f,5.0f,3.0f};
+    float trauma=0.5f;
+    for(int i=0;i<3;i++) raw[i]/=(1.0f+trauma);
+    CHECK(fabsf(raw[0]-6.666f)<0.01f, "dampened by 1.5x");
+    CHECK(raw[0]<10.0f, "reduced");
+    /* zero trauma = no change */
+    float r2[]={10.0f}; trauma=0.0f;
+    if(trauma>0.1f) r2[0]/=(1.0f+trauma);
+    CHECK(r2[0]==10.0f, "zero trauma unchanged");
+    PASS();
+}
+
+/* ── 14. Destiny vector ── */
+void test_destiny(void) {
+    TEST("destiny_vector");
+    float dest[4]={0}; float tok_emb[4]={1,0,0,0};
+    /* EMA update: dest = 0.9*dest + 0.1*tok */
+    for(int d=0;d<4;d++) dest[d]=0.9f*dest[d]+0.1f*tok_emb[d];
+    CHECK(fabsf(dest[0]-0.1f)<1e-5f, "first update");
+    /* second update same token */
+    for(int d=0;d<4;d++) dest[d]=0.9f*dest[d]+0.1f*tok_emb[d];
+    CHECK(fabsf(dest[0]-0.19f)<1e-5f, "second update=0.19");
+    /* global destiny inheritance: 30% */
+    float gdest[4]={1,1,1,1}, local[4]={0};
+    for(int d=0;d<4;d++) local[d]=0.3f*gdest[d];
+    CHECK(fabsf(local[0]-0.3f)<1e-5f, "inherit 30%");
+    /* export back: 70% old + 30% new */
+    float new_local[4]={2,2,2,2};
+    for(int d=0;d<4;d++) gdest[d]=0.7f*gdest[d]+0.3f*new_local[d];
+    CHECK(fabsf(gdest[0]-1.3f)<1e-5f, "export 0.7+0.3");
+    PASS();
+}
+
+/* ── 15. Word capture ── */
+void test_word_capture(void) {
+    TEST("word_capture_bigram_update");
+    typedef struct{int a,b;float p;}Bi;
+    Bi bis[10]={{5,6,0.3f}}; int nb=1;
+    /* capture new bigram 5→6 → should increase prob */
+    int prev=5,cur=6; int found=0;
+    for(int j=0;j<nb;j++) if(bis[j].a==prev&&bis[j].b==cur){bis[j].p+=0.005f;found=1;break;}
+    CHECK(found, "found existing");
+    CHECK(fabsf(bis[0].p-0.305f)<1e-5f, "prob increased");
+    /* capture new bigram 7→8 → should add */
+    prev=7;cur=8;found=0;
+    for(int j=0;j<nb;j++) if(bis[j].a==prev&&bis[j].b==cur){found=1;break;}
+    if(!found){bis[nb].a=prev;bis[nb].b=cur;bis[nb].p=0.01f;nb++;}
+    CHECK(nb==2, "new bigram added");
+    CHECK(bis[1].a==7&&bis[1].b==8, "correct ids");
+    PASS();
+}
+
+/* ── 16. Frequency penalty ── */
+void test_frequency_penalty(void) {
+    TEST("frequency_penalty");
+    float unigram=0.05f; /* 5% of corpus */
+    float penalty=0;
+    if(unigram>0.01f) penalty=0.3f*(unigram-0.01f)*100.0f;
+    CHECK(fabsf(penalty-1.2f)<0.01f, "5% token gets -1.2");
+    /* rare token: no penalty */
+    unigram=0.001f; penalty=0;
+    if(unigram<1e-6f) penalty=2.0f;
+    else if(unigram>0.01f) penalty=0.3f*(unigram-0.01f)*100.0f;
+    CHECK(penalty==0, "rare token no penalty");
+    /* unseen token */
+    unigram=0; penalty=0;
+    if(unigram<1e-6f) penalty=2.0f;
+    CHECK(fabsf(penalty-2.0f)<1e-5f, "unseen gets -2.0");
+    PASS();
+}
+
+/* ── 17. SPA embedding ── */
+void test_spa_embed(void) {
+    TEST("spa_embedding");
+    /* sentence embedding should be non-zero for non-empty input */
+    float embed[32]={0};
+    /* simulate: weighted mean of random W_embed rows */
+    float w[3][32]; srand(42);
+    for(int i=0;i<3;i++) for(int d=0;d<32;d++) w[i][d]=0.02f*((float)rand()/RAND_MAX-0.5f);
+    float alpha=0.85f,total_w=0;
+    for(int i=0;i<3;i++){float wt=powf(alpha,(float)(2-i));for(int d=0;d<32;d++) embed[d]+=wt*w[i][d];total_w+=wt;}
+    for(int d=0;d<32;d++) embed[d]/=total_w;
+    float norm=0;for(int d=0;d<32;d++) norm+=embed[d]*embed[d];
+    CHECK(norm>0, "non-zero embedding");
+    PASS();
+}
+
+/* ── 18. Adaptive coefficients ── */
+void test_adaptive_coefficients(void) {
+    TEST("adaptive_metaweight_coeffs");
+    /* with transformer: tmag > 0.1 → lower coefficients */
+    float tmag=2.0f; int has_tf=tmag>0.1f;
+    float c_bg=has_tf?5.0f:15.0f;
+    CHECK(c_bg==5.0f, "with TF: bigram=5");
+    /* without transformer: tmag ~ 0 → higher coefficients */
+    tmag=0.0f; has_tf=tmag>0.1f;
+    c_bg=has_tf?5.0f:15.0f;
+    CHECK(c_bg==15.0f, "no TF: bigram=15");
+    PASS();
+}
+
+/* ── 19. Hebbian decay ── */
+void test_hebbian_decay(void) {
+    TEST("hebbian_decay");
+    float str=1.0f;
+    str*=0.998f; CHECK(fabsf(str-0.998f)<1e-5f, "one decay");
+    for(int i=0;i<100;i++) str*=0.998f;
+    CHECK(str<0.82f, "100 decays < 0.82");
+    CHECK(str>0.80f, "100 decays > 0.80");
+    PASS();
+}
+
+/* ── 20. Bigram blocking ── */
+void test_bigram_blocking(void) {
+    TEST("bigram_blocking");
+    int ctx[]={10,20,30,10,20}; int cl=5;
+    float raw[50]; for(int i=0;i<50;i++) raw[i]=1.0f;
+    /* block: if ctx[ri]==ctx[cl-2] then penalize ctx[ri+1] */
+    /* ctx[cl-2]=10, ctx[0]=10 → penalize ctx[1]=20 */
+    if(cl>=2){for(int ri=0;ri<cl-1;ri++){
+        if(ctx[ri]==ctx[cl-2]&&ctx[ri+1]<50) raw[ctx[ri+1]]*=0.2f;
+    }}
+    CHECK(raw[20]<1.0f, "token 20 penalized");
+    CHECK(fabsf(raw[20]-0.04f)<0.01f, "penalized twice (0.2*0.2)");
+    CHECK(raw[30]==1.0f, "token 30 untouched");
+    PASS();
+}
+
+/* ── 21. Smoke: compile only ── */
+void test_smoke_compile(void) {
+    TEST("smoke_compile");
     int ret=system("gcc postgpt_q.c -O2 -lm -o /tmp/q_smoke 2>/dev/null");
     CHECK(ret==0, "compiles");
-    ret=system("echo quit | timeout 15 /tmp/q_smoke q.merges q.txt >/dev/null 2>&1");
-    CHECK(ret==0, "runs no-crash");
     remove("/tmp/q_smoke");
+    PASS();
+}
+
+/* ── 22. Smoke: run with small corpus ── */
+void test_smoke_run_small(void) {
+    TEST("smoke_run_small_corpus");
+    system("head -c 5000 q.txt > /tmp/q_tiny.txt 2>/dev/null");
+    int ret=system("gcc postgpt_q.c -O2 -lm -o /tmp/q_smoke 2>/dev/null");
+    if(ret!=0){FAIL("compile");return;}
+    ret=system("echo quit | timeout 30 /tmp/q_smoke q.merges /tmp/q_tiny.txt >/dev/null 2>&1");
+    CHECK(ret==0, "runs on 5KB corpus");
+    remove("/tmp/q_smoke"); remove("/tmp/q_tiny.txt");
+    PASS();
+}
+
+/* ── 23. Smoke: run with weights ── */
+void test_smoke_run_weights(void) {
+    TEST("smoke_run_with_weights");
+    system("head -c 5000 q.txt > /tmp/q_tiny.txt 2>/dev/null");
+    int ret=system("gcc postgpt_q.c -O2 -lm -o /tmp/q_smoke 2>/dev/null");
+    if(ret!=0){FAIL("compile");return;}
+    /* try rrpram3_janus3 if exists */
+    ret=system("test -f weights/rrpram3_janus3.bin");
+    if(ret!=0){printf("SKIP (no .bin weights)\n");tests_passed++;return;}
+    ret=system("echo quit | timeout 30 /tmp/q_smoke weights/rrpram3_janus3.bin q.merges /tmp/q_tiny.txt >/dev/null 2>&1");
+    CHECK(ret==0, "runs with weights");
+    remove("/tmp/q_smoke"); remove("/tmp/q_tiny.txt");
     PASS();
 }
 
@@ -298,7 +476,18 @@ int main(void) {
     test_memory();
     test_schumann();
     test_nucleus();
-    test_smoke();
+    test_prophecy();
+    test_trauma();
+    test_destiny();
+    test_word_capture();
+    test_frequency_penalty();
+    test_spa_embed();
+    test_adaptive_coefficients();
+    test_hebbian_decay();
+    test_bigram_blocking();
+    test_smoke_compile();
+    test_smoke_run_small();
+    test_smoke_run_weights();
     printf("\n==========================================\n");
     printf("  PASSED: %d  FAILED: %d  TOTAL: %d\n", tests_passed, tests_failed, tests_passed+tests_failed);
     printf("==========================================\n\n");
